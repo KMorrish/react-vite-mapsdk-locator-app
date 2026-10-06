@@ -23,22 +23,24 @@ function FilterGroup({
   return (
     <fieldset className="filter-group">
       <legend>{title}</legend>
-      {fields.map((field) => (
-        <label className="checkbox-row" key={field.name}>
-          <input
-            type="checkbox"
-            checked={selected.includes(field.name)}
-            onChange={(event) => {
-              onChange(
-                event.target.checked
-                  ? [...selected, field.name]
-                  : selected.filter((name) => name !== field.name),
-              );
-            }}
-          />
-          <span>{field.label}</span>
-        </label>
-      ))}
+      <div className="filter-options">
+        {fields.map((field) => (
+          <label className="checkbox-row" key={field.name}>
+            <input
+              type="checkbox"
+              checked={selected.includes(field.name)}
+              onChange={(event) => {
+                onChange(
+                  event.target.checked
+                    ? [...selected, field.name]
+                    : selected.filter((name) => name !== field.name),
+                );
+              }}
+            />
+            <span>{field.label}</span>
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
@@ -52,7 +54,15 @@ export default function SiteFilters({
 }: Props) {
   return (
     <section className="filters-section" aria-label="Site filters">
-      <h2 className="section-heading">Filters</h2>
+      <div className="filters-heading">
+        <div>
+          <p className="eyebrow">MAKE IT YOURS</p>
+          <h2 className="section-heading">Refine your search</h2>
+        </div>
+        {selected.length > 0 && (
+          <button className="clear-filters" type="button" onClick={() => onChange([])}>Clear all</button>
+        )}
+      </div>
       <FilterGroup
         title="Fuel types"
         fields={fields.filter((field) => field.group === "fuel")}
@@ -73,12 +83,10 @@ export default function SiteFilters({
             checked={matchAny}
             onChange={(event) => onMatchAnyChange(event.target.checked)}
           />
-          <span>Match any selected filter (off = match all)</span>
+          <span>{matchAny ? "Match any selected option" : "Match all selected options"}</span>
         </label>
       )}
-      {fields.filter((field) => field.group === "truck").length > 0 && (
-        <p className="truck-filter-note">Truck access is shown in each site's details.</p>
-      )}
+      <p className="filter-hint">Choose one or more options to narrow your results.</p>
     </section>
   );
 }
