@@ -16,7 +16,8 @@ export interface SiteFields {
   status?: string;
   closedFrom?: string;
   closedTo?: string;
-  hours: Array<{ day: string; field: string }>;
+  open24Hours?: string;
+  hours: Array<{ day: string; opening?: string; closing?: string }>;
   yesNo: YesNoField[];
   objectId: string;
 }

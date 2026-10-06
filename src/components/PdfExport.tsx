@@ -25,16 +25,12 @@ export default function PdfExport({ results, fields }: Props) {
       document.text("Fuel Site Search Results", 14, 18);
       document.setFont("helvetica", "normal");
       document.setFontSize(10);
-      document.text(
-        results.length > 50 ? `Top 50 of ${results.length}` : `Sites: ${results.length}`,
-        14,
-        25,
-      );
+      document.text(`Sites: ${results.length}`, 14, 25);
 
       autoTable(document, {
         startY: 31,
         head: [["Name", "Address", "Phone", "Distance (km)"]],
-        body: results.slice(0, 50).map((site) => [
+        body: results.map((site) => [
           attributeValue(site.attributes, fields.name),
           formatAddress(site.attributes, fields),
           attributeValue(site.attributes, fields.phone),

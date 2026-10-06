@@ -6,7 +6,7 @@ import SiteDetail from "./components/SiteDetail";
 import SiteFilters from "./components/SiteFilters";
 import ResultsList from "./components/ResultsList";
 import type { SearchPointData, SiteFields, SiteResult } from "./types";
-import { isYes } from "./utils/siteFields";
+import { attributeValue, formatAddress, isYes } from "./utils/siteFields";
 
 const WEBMAP_ID = "cee7757ff62743b2b26013e560914faa";
 const RADII_KM = [5, 10, 20, 50];
@@ -39,19 +39,35 @@ export default function App() {
     let view: MapView | undefined;
 
     void (async () => {
-      const [{ default: WebMap }, { default: MapView }] = await Promise.all([
+      const [
+        { default: WebMap },
+        { default: MapView },
+        { default: FeatureLayerClass },
+        { default: esriConfig },
+      ] = await Promise.all([
         import("@arcgis/core/WebMap.js"),
         import("@arcgis/core/views/MapView.js"),
+        import("@arcgis/core/layers/FeatureLayer.js"),
+        import("@arcgis/core/config.js"),
       ]);
       if (cancelled || !mapContainerRef.current) return;
+      if (import.meta.env.VITE_ARCGIS_API_KEY) {
+        esriConfig.apiKey = import.meta.env.VITE_ARCGIS_API_KEY;
+      }
 
       const webmap = new WebMap({ portalItem: { id: WEBMAP_ID } });
       await webmap.load();
-      const layer = webmap.allLayers.find(
-        (candidate): candidate is FeatureLayer => candidate.type === "feature",
-      );
+      if (cancelled) return;
+      let layer: FeatureLayer | undefined;
+      for (const candidate of webmap.allLayers) {
+        if (candidate instanceof FeatureLayerClass) {
+          layer = candidate;
+          break;
+        }
+      }
       if (!layer) throw new Error("The web map does not contain a feature layer for sites.");
       await layer.load();
+      if (cancelled) return;
 
       view = new MapView({
         container: mapContainerRef.current,
@@ -63,24 +79,9 @@ export default function App() {
         return;
       }
 
-      const sample = await layer.queryFeatures({
-        where: "1=1",
-        outFields: ["*"],
-        returnGeometry: false,
-        num: 100,
-      });
-      if (cancelled) {
-        view.destroy();
-        return;
-      }
-
       const objectIdField = layer.objectIdField;
       if (!objectIdField) throw new Error("The sites layer does not define an object ID field.");
-      const discovered = (await import("./utils/siteFields")).discoverSiteFields(
-        layer.fields,
-        sample.features.map((feature) => feature.attributes),
-        objectIdField,
-      );
+      const discovered = (await import("./utils/siteFields")).discoverSiteFields(layer.fields, objectIdField);
       viewRef.current = view;
       layerRef.current = layer;
       setSiteFields(discovered);
@@ -114,16 +115,19 @@ export default function App() {
 
     void (async () => {
       if (!layer) throw new Error("The sites layer is not ready.");
-      const [{ default: Point }, geometryEngine] = await Promise.all([
+      const [{ default: Point }, geometryEngine, geodesicUtils] = await Promise.all([
         import("@arcgis/core/geometry/Point.js"),
         import("@arcgis/core/geometry/geometryEngine.js"),
+        import("@arcgis/core/geometry/support/geodesicUtils.js"),
       ]);
       const point = new Point({
         x: searchPoint.x,
         y: searchPoint.y,
         spatialReference: { wkid: searchPoint.wkid },
       });
-      const searchArea = geometryEngine.geodesicBuffer(point, radiusKm, "kilometers");
+      const bufferedArea = geometryEngine.geodesicBuffer(point, radiusKm, "kilometers");
+      const searchArea = Array.isArray(bufferedArea) ? bufferedArea[0] : bufferedArea;
+      if (!searchArea) throw new Error("A search area could not be created for this location.");
       const query = layer.createQuery();
       query.geometry = searchArea;
       query.spatialRelationship = "intersects";
@@ -139,6 +143,10 @@ export default function App() {
         const batch = await layer.queryFeatures(batchQuery);
         for (const feature of batch.features) {
           if (!feature.geometry) continue;
+          const sitePoint = feature.geometry.type === "point"
+            ? feature.geometry
+            : feature.geometry.extent?.center;
+          if (!sitePoint) continue;
           const matches = selectedFilters.map((field) =>
             isYes(feature.attributes[field]),
           );
@@ -148,12 +156,12 @@ export default function App() {
           ) {
             continue;
           }
-          const distance = geometryEngine.geodesicDistance(
+          const distance = geodesicUtils.geodesicDistance(
             point,
-            feature.geometry,
+            sitePoint,
             "kilometers",
-          );
-          if (distance === null || !Number.isFinite(distance)) continue;
+          ).distance;
+          if (distance === undefined || !Number.isFinite(distance)) continue;
           const objectId = feature.attributes[siteFields.objectId];
           if (typeof objectId !== "number" && typeof objectId !== "string") continue;
           fetched.push({
@@ -196,7 +204,22 @@ export default function App() {
 
     let cancelled = false;
     void view.whenLayerView(layer).then((layerView) => {
-      if (!cancelled) highlightRef.current = layerView.highlight(selectedSite.objectId);
+      if (cancelled) return;
+      void Promise.all([
+        import("@arcgis/core/Graphic.js"),
+        import("@arcgis/core/geometry/support/jsonUtils.js"),
+      ]).then(([{ default: Graphic }, { fromJSON }]) => {
+        if (cancelled) return;
+        const graphic = new Graphic({
+          geometry: fromJSON(selectedSite.geometry),
+          attributes: selectedSite.attributes,
+        });
+        highlightRef.current = layerView.highlight(graphic);
+      }).catch((error: unknown) => {
+        if (!cancelled) {
+          setSearchError(error instanceof Error ? error.message : "The selected site could not be highlighted.");
+        }
+      });
     }).catch((error: unknown) => {
       if (!cancelled) {
         setSearchError(error instanceof Error ? error.message : "The selected site could not be highlighted.");
@@ -212,12 +235,26 @@ export default function App() {
   const onSearch = useCallback((point: SearchPointData) => {
     setSelectedSite(null);
     setSearchPoint(point);
+    void import("@arcgis/core/geometry/Point.js").then(({ default: Point }) => {
+      const view = viewRef.current;
+      if (!view) return;
+      return view.goTo({
+        center: new Point({
+          x: point.x,
+          y: point.y,
+          spatialReference: { wkid: point.wkid },
+        }),
+        zoom: 10,
+      });
+    }).catch((error: unknown) => {
+      setSearchError(error instanceof Error ? error.message : "The map could not move to the search location.");
+    });
   }, []);
 
   function zoomToSite(site: SiteResult) {
     const view = viewRef.current;
     if (!view) return;
-    void import("@arcgis/core/geometry/geometryJsonUtils.js").then(({ fromJSON }) => {
+    void import("@arcgis/core/geometry/support/jsonUtils.js").then(({ fromJSON }) => {
       const geometry = fromJSON(site.geometry);
       return view.goTo({ target: geometry, zoom: 15 });
     }).catch((error: unknown) => {
@@ -225,8 +262,19 @@ export default function App() {
     });
   }
 
-  function logDirections(site: SiteResult) {
-    console.log("Directions requested for site:", site.attributes);
+  function openDirections(site: SiteResult) {
+    if (!siteFields) return;
+    const destination = formatAddress(site.attributes, siteFields)
+      || attributeValue(site.attributes, siteFields.name);
+    if (!destination) {
+      setSearchError("Directions are unavailable because this site has no address.");
+      return;
+    }
+    window.open(
+      `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
   }
 
   return (
@@ -234,21 +282,25 @@ export default function App() {
       <aside className="side-panel">
         <div className="panel-scroll">
           <header className="app-heading">
-            <p className="eyebrow">Find a fuel site</p>
-            <h1>Fuel Site Locator</h1>
+            <div>
+              <p className="eyebrow">FIND YOUR NEXT STOP</p>
+              <h1>Fuel Site Locator</h1>
+            </div>
           </header>
-          <SearchControls view={mapReady ? viewRef.current : null} onSearch={onSearch} disabled={!mapReady} />
-          <div className="radius-control">
-            <label className="field-label" htmlFor="search-radius">Search radius</label>
-            <select
-              id="search-radius"
-              value={radiusKm}
-              onChange={(event) => setRadiusKm(Number(event.target.value))}
-              disabled={!mapReady}
-            >
-              {RADII_KM.map((radius) => <option key={radius} value={radius}>{radius} km</option>)}
-            </select>
-          </div>
+          <section className="search-card" aria-label="Search for a fuel site">
+            <SearchControls view={mapReady ? viewRef.current : null} onSearch={onSearch} disabled={!mapReady} />
+            <div className="radius-control">
+              <label className="field-label" htmlFor="search-radius">Search within</label>
+              <select
+                id="search-radius"
+                value={radiusKm}
+                onChange={(event) => setRadiusKm(Number(event.target.value))}
+                disabled={!mapReady}
+              >
+                {RADII_KM.map((radius) => <option key={radius} value={radius}>{radius} km</option>)}
+              </select>
+            </div>
+          </section>
           {filterFields.length > 0 && (
             <SiteFilters
               fields={filterFields}
@@ -258,7 +310,7 @@ export default function App() {
               onMatchAnyChange={setMatchAny}
             />
           )}
-          {searching && <p className="status-message" role="status">Searching nearby sites...</p>}
+          {searching && <p className="status-message" role="status"><span className="status-dot" />Finding the closest sites...</p>}
           {searchError && <p className="inline-error" role="alert">{searchError}</p>}
           {siteFields && (
             selectedSite ? (
@@ -267,7 +319,7 @@ export default function App() {
                 fields={siteFields}
                 onBack={() => setSelectedSite(null)}
                 onZoom={() => zoomToSite(selectedSite)}
-                onDirections={() => logDirections(selectedSite)}
+                onDirections={() => openDirections(selectedSite)}
               />
             ) : (
               <ResultsList

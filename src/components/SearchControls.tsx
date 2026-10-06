@@ -9,7 +9,7 @@ interface Props {
 
 export default function SearchControls({ view, onSearch, disabled }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const widgetRef = useRef<__esri.Search | null>(null);
+  const widgetRef = useRef<__esri.widgetsSearch | null>(null);
   const callbackRef = useRef(onSearch);
   const [searchError, setSearchError] = useState("");
   const [locating, setLocating] = useState(false);
@@ -21,40 +21,33 @@ export default function SearchControls({ view, onSearch, disabled }: Props) {
   useEffect(() => {
     if (!view || !containerRef.current) return;
     let cancelled = false;
-    let widget: __esri.Search | undefined;
+    let widget: __esri.widgetsSearch | undefined;
 
     void (async () => {
-      const [{ default: Search }, { default: Locator }] = await Promise.all([
+      const [{ default: Search }, { default: LocatorSearchSource }] = await Promise.all([
         import("@arcgis/core/widgets/Search.js"),
-        import("@arcgis/core/rest/Locator.js"),
+        import("@arcgis/core/widgets/Search/LocatorSearchSource.js"),
       ]);
       if (cancelled || !containerRef.current) return;
-      if (import.meta.env.VITE_ARCGIS_API_KEY) {
-        const { default: esriConfig } = await import("@arcgis/core/config.js");
-        esriConfig.apiKey = import.meta.env.VITE_ARCGIS_API_KEY;
-      }
-
-      widget = new Search({
+      const searchWidget = new Search({
         view,
         container: containerRef.current,
         includeDefaultSources: false,
         allPlaceholder: "Search an Australian address",
         sources: [
-          {
-            locator: new Locator({
-              url: "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer",
-            }),
+          new LocatorSearchSource({
+            url: "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer",
             countryCode: "AU",
             name: "Australia",
             placeholder: "Search an Australian address",
             singleLineFieldName: "SingleLine",
-            outFields: ["*"],
             maxResults: 6,
             maxSuggestions: 6,
-          },
+          }),
         ],
       });
-      widget.on("select-result", (event) => {
+      widget = searchWidget;
+      searchWidget.on("select-result", (event) => {
         const point = event.result.feature.geometry;
         if (point?.type !== "point") return;
         callbackRef.current({
@@ -64,7 +57,7 @@ export default function SearchControls({ view, onSearch, disabled }: Props) {
         });
         setSearchError("");
       });
-      widgetRef.current = widget;
+      widgetRef.current = searchWidget;
     })().catch((error: unknown) => {
       if (!cancelled) {
         setSearchError(error instanceof Error ? error.message : "Address search could not be loaded.");
@@ -104,10 +97,11 @@ export default function SearchControls({ view, onSearch, disabled }: Props) {
 
   return (
     <section className="search-section" aria-label="Site search">
-      <label className="field-label" htmlFor="address-search">Address</label>
-      <div className="search-widget" id="address-search" ref={containerRef} />
+      <p className="field-label">Where are you headed?</p>
+      <div className="search-widget" role="group" aria-label="Search an Australian address" ref={containerRef} />
       <button className="location-button" type="button" onClick={useMyLocation} disabled={disabled || locating}>
-        {locating ? "Finding your location..." : "Use my location"}
+        <span aria-hidden="true">◎</span>
+        {locating ? "Finding your location..." : "Use my current location"}
       </button>
       {searchError && <p className="inline-error" role="alert">{searchError}</p>}
     </section>

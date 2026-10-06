@@ -1,16 +1,20 @@
 # Fuel Site Locator
 
-A Vite + React prototype using the ArcGIS Maps SDK for JavaScript and the public
-web map `cee7757ff62743b2b26013e560914faa`.
+A responsive React + Vite fuel locator powered by the ArcGIS Maps SDK for
+JavaScript and web map `cee7757ff62743b2b26013e560914faa`. Search by an
+Australian address or current location, set a 5, 10, 20, or 50 km radius, and
+filter nearby sites by fuel and services. Results are sorted by distance and
+can be opened for site details, directions, and map zoom. Export the current
+results to PDF from the results header.
 
 ## Run locally
 
 1. Install Node.js 20 or newer.
-2. Copy `.env.example` to `.env.local` and add an ArcGIS API key as
-   `VITE_ARCGIS_API_KEY` if your ArcGIS account requires one for geocoding.
+2. Set `VITE_ARCGIS_API_KEY` in `.env.local` if your ArcGIS account requires
+   an API key for the map or address geocoding.
 3. Run `npm install`, then `npm run dev`.
 
-The map and SDK modules load on demand. The first feature layer in the web map
-provides the site schema. Yes/No attributes are discovered from a sample of its
-features; fuel, service, and truck fields are grouped from their field names
-and aliases so the app does not depend on a fixed service schema.
+The site layer's fields are matched to the locator's published fuel, service,
+truck-access, status, address, phone, and trading-hours labels. Only known
+fuel, service, and truck-access fields are shown, and Yes/No values are
+displayed only when they are Yes.
